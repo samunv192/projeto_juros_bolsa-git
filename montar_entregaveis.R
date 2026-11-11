@@ -1,0 +1,255 @@
+# montar_entregaveis.R — monta os pacotes dos Entregáveis 1, 2 e 3 prontos para enviar
+# Rode DEPOIS do rodar_tudo.R. Resultado: pasta entregaveis/ com três pastas e três .zip.
+
+source("scripts/parametros.R")
+
+SAIDA <- "entregaveis"
+E1 <- file.path(SAIDA, "Entregavel1_Coleta")
+E2 <- file.path(SAIDA, "Entregavel2_Base")
+E3 <- file.path(SAIDA, "Entregavel3_Analise")
+
+# --- 0. Confere se tudo já foi gerado -----------------------------------
+brutos   <- c("bcb_selic_meta.csv", "bcb_ipca.csv", "yahoo_precos_diarios.csv")
+tratados <- c("base_mensal.csv", "base_mensal_excel.csv", "retornos_ativos_mensal.csv")
+necessarios <- c(file.path(PASTA_BRUTOS, brutos), file.path(PASTA_TRATADOS, tratados),
+                 "dados/dicionario_dados.md")
+faltando <- necessarios[!file.exists(necessarios)]
+if (length(faltando) > 0) {
+  stop("Rode o rodar_tudo.R antes. Arquivos que faltam:\n  ", paste(faltando, collapse = "\n  "))
+}
+
+unlink(SAIDA, recursive = TRUE)  # começa do zero a cada execução
+dir.create(file.path(E1, "scripts"),       recursive = TRUE)
+dir.create(file.path(E1, "dados", "brutos"), recursive = TRUE)
+dir.create(file.path(E2, "scripts"),       recursive = TRUE)
+
+escrever <- function(linhas, caminho) {
+  con <- file(caminho, open = "w", encoding = "UTF-8")
+  writeLines(linhas, con)
+  close(con)
+}
+fmt_data <- function(x) format(as.Date(x), "%d/%m/%Y")
+
+# --- 1. Entregável 1: scripts de coleta + dados brutos ------------------
+file.copy(file.path("scripts", c("parametros.R", "00_setup.R", "01_coleta_bcb.R", "02_coleta_mercado.R")),
+          file.path(E1, "scripts"))
+file.copy(file.path(PASTA_BRUTOS, brutos), file.path(E1, "dados", "brutos"))
+
+selic  <- read_csv(file.path(PASTA_BRUTOS, "bcb_selic_meta.csv"),       show_col_types = FALSE)
+ipca   <- read_csv(file.path(PASTA_BRUTOS, "bcb_ipca.csv"),             show_col_types = FALSE)
+precos <- read_csv(file.path(PASTA_BRUTOS, "yahoo_precos_diarios.csv"), show_col_types = FALSE)
+
+data_coleta <- format(file.mtime(file.path(PASTA_BRUTOS, "yahoo_precos_diarios.csv")), "%d/%m/%Y")
+pregoes <- count(precos, symbol)
+lista_tickers <- CESTAS |>
+  group_by(setor) |>
+  summarise(t = paste(sub("\\.SA$", "", ticker), collapse = ", "), .groups = "drop") |>
+  mutate(linha = paste0("  - ", setor, ": ", t)) |>
+  pull(linha)
+
+escrever(c(
+  "ENTREGÁVEL 1 — SCRIPTS DE COLETA",
+  "Projeto: Juros e bolsa — como setores da B3 reagem à taxa Selic",
+  "Disciplina: REC3302 — Introdução ao R Aplicado à Economia e Finanças (FEA-RP/USP)",
+  "",
+  "O QUE ESTES SCRIPTS FAZEM",
+  "  - 00_setup.R: instala os pacotes necessários e cria as pastas.",
+  "  - parametros.R: período, pastas e composição das cestas setoriais.",
+  "  - 01_coleta_bcb.R: baixa do Banco Central (SGS) a meta Selic (série 432) e o IPCA mensal (série 433).",
+  "  - 02_coleta_mercado.R: baixa do Yahoo Finance os preços diários ajustados de 9 ações e do Ibovespa.",
+  "",
+  "COMO RODAR",
+  "  1. Abrir esta pasta no Positron (File > Open Folder) ou no RStudio.",
+  "  2. Rodar, nesta ordem: scripts/00_setup.R, scripts/01_coleta_bcb.R e scripts/02_coleta_mercado.R.",
+  "  3. Os dados são salvos em dados/brutos/.",
+  "",
+  "COLETA INCLUÍDA NESTE PACOTE",
+  paste0("  - Data da coleta: ", data_coleta),
+  paste0("  - Meta Selic: ", nrow(selic), " observações diárias, de ", fmt_data(min(selic$date)),
+         " a ", fmt_data(max(selic$date))),
+  paste0("  - IPCA: ", nrow(ipca), " meses, de ", format(min(ipca$date), "%m/%Y"),
+         " a ", format(max(ipca$date), "%m/%Y")),
+  paste0("  - Preços: ", n_distinct(precos$symbol), " tickers, de ", fmt_data(min(precos$date)),
+         " a ", fmt_data(max(precos$date)), ", com ", min(pregoes$n),
+         if (min(pregoes$n) != max(pregoes$n)) paste0(" a ", max(pregoes$n)) else "",
+         " pregões por ticker"),
+  "  - Composição das cestas:",
+  lista_tickers,
+  "",
+  "OBSERVAÇÕES",
+  "  - A API do BCB limita cada consulta a 10 anos; o script baixa em blocos de 3 anos e junta.",
+  "  - As fontes são atualizadas com o tempo (meses novos e revisões de preços ajustados), então",
+  "    rodar de novo em outra data pode gerar valores um pouco diferentes. Os arquivos em",
+  "    dados/brutos/ registram exatamente o que foi coletado na data acima."
+), file.path(E1, "README.txt"))
+
+# --- 2. Entregável 2: base mensal + dicionário + validação --------------
+file.copy(file.path(PASTA_TRATADOS, tratados), E2)
+file.copy("dados/dicionario_dados.md", E2)
+file.copy(file.path("scripts", c("parametros.R", "03_base_mensal.R", "04_validacao.R")),
+          file.path(E2, "scripts"))
+
+# Saída das checagens salva em texto
+capture.output(source("scripts/04_validacao.R"), file = file.path(E2, "validacao.txt"))
+linhas_val <- readLines(file.path(E2, "validacao.txt"), encoding = "UTF-8")
+n_ok    <- sum(grepl("^\\s*OK\\s", linhas_val))
+n_falha <- sum(grepl("^\\s*FALHA\\s", linhas_val))
+
+base <- read_csv(file.path(PASTA_TRATADOS, "base_mensal.csv"), show_col_types = FALSE)
+
+escrever(c(
+  "ENTREGÁVEL 2 — BASE DE DADOS MENSAL",
+  "Projeto: Juros e bolsa — como setores da B3 reagem à taxa Selic",
+  "Disciplina: REC3302 — Introdução ao R Aplicado à Economia e Finanças (FEA-RP/USP)",
+  "",
+  "CONTEÚDO",
+  paste0("  - base_mensal.csv: arquivo principal. ", nrow(base), " meses (",
+         format(min(base$mes), "%m/%Y"), " a ", format(max(base$mes), "%m/%Y"), "), ",
+         ncol(base), " variáveis."),
+  "  - base_mensal_excel.csv: a mesma base no padrão brasileiro (ponto e vírgula e vírgula decimal), para abrir no Excel.",
+  "  - retornos_ativos_mensal.csv: retorno mensal de cada ação, para testes de robustez.",
+  "  - dicionario_dados.md: descrição de cada variável, unidades, fontes e regras de construção.",
+  "  - validacao.txt: resultado das checagens automáticas da base.",
+  "  - scripts/: código que constrói (03_base_mensal.R) e valida (04_validacao.R) a base.",
+  "",
+  "COMO A BASE FOI CONSTRUÍDA",
+  "  - Preço do mês: preço ajustado do último pregão do mês; retorno simples mensal, em %.",
+  "  - Setores: cestas de 3 ações (bancos, varejo e utilities), com média simples dos retornos.",
+  "  - Selic: meta vigente no fim do mês; delta_selic é a variação no mês, em pontos percentuais.",
+  "  - Ciclo: direção do último movimento do Copom (alta ou queda); meses sem mudança herdam o ciclo vigente.",
+  "  - Juro real ex-post: (1 + Selic) / (1 + IPCA acumulado em 12 meses) - 1.",
+  "  - Só entram meses completos e com IPCA já divulgado.",
+  "",
+  "VALIDAÇÃO",
+  paste0("  - ", n_ok, " checagens OK e ", n_falha, " falha(s). Detalhes em validacao.txt."),
+  "",
+  "COMO REPRODUZIR",
+  "  A base é gerada a partir dos dados brutos do Entregável 1. Copie os scripts deste pacote",
+  "  para a pasta scripts/ do Entregável 1 e rode 03_base_mensal.R e depois 04_validacao.R.",
+  "  Os arquivos são gerados em dados/tratados/."
+), file.path(E2, "README.txt"))
+
+# --- 3. Entregável 3: análise de dados -----------------------------------
+# Pasta autocontida: tem a base de entrada, o script e os resultados, então quem
+# abrir a pasta no Positron/RStudio consegue rodar scripts/05_analise.R direto.
+dir.create(file.path(E3, "scripts"),                 recursive = TRUE)
+dir.create(file.path(E3, PASTA_TRATADOS),            recursive = TRUE)
+dir.create(file.path(E3, "resultados", "figuras"),   recursive = TRUE)
+dir.create(file.path(E3, "resultados", "tabelas"),   recursive = TRUE)
+
+# Roda a análise de novo para garantir que figuras e tabelas estão atualizadas,
+# guardando a saída do console. Ambiente separado para não sobrescrever objetos daqui.
+pdf(NULL)  # print() dos gráficos vai para um dispositivo nulo (não cria Rplots.pdf)
+saida_analise <- capture.output(source("scripts/05_analise.R", local = new.env(), encoding = "UTF-8"))
+dev.off()
+escrever(saida_analise, file.path(E3, "saida_console.txt"))
+
+file.copy(file.path("scripts", c("parametros.R", "05_analise.R")), file.path(E3, "scripts"))
+file.copy(file.path(PASTA_TRATADOS, c("base_mensal.csv", "retornos_ativos_mensal.csv")),
+          file.path(E3, PASTA_TRATADOS))
+file.copy(list.files("resultados/figuras", full.names = TRUE), file.path(E3, "resultados", "figuras"))
+file.copy(list.files("resultados/tabelas", full.names = TRUE), file.path(E3, "resultados", "tabelas"))
+
+# Números do resumo lidos das tabelas (assim o README acompanha os resultados)
+num <- function(x, d = 2) formatC(x, format = "f", digits = d, decimal.mark = ",")
+pv  <- function(p) if (p < 0.001) "p < 0,001" else paste0("p = ", num(p, 3))
+
+t2 <- read_csv("resultados/tabelas/t2_retorno_por_ciclo.csv",     show_col_types = FALSE)
+t3 <- read_csv("resultados/tabelas/t3_correlacoes_defasadas.csv", show_col_types = FALSE)
+t4 <- read_csv("resultados/tabelas/t4_regressoes.csv",            show_col_types = FALSE)
+t5 <- read_csv("resultados/tabelas/t5_robustez_varejo.csv",       show_col_types = FALSE)
+t6 <- read_csv("resultados/tabelas/t6_efeito_por_ciclo.csv",      show_col_types = FALSE)
+
+coef_m1 <- function(s, termo = "delta_selic") filter(t4, setor == s, modelo == "m1", term == termo)
+rob     <- function(esp) filter(t5, especificacao == esp)
+ciclo_m <- function(s, c) filter(t2, serie == s, ciclo == c)$retorno_medio
+
+b_var <- coef_m1("varejo"); b_ban <- coef_m1("bancos"); b_uti <- coef_m1("utilities")
+sem_mglu <- rob("Varejo sem MGLU3"); so_mglu <- rob("Só MGLU3")
+cor_var_sig <- filter(t3, setor == "varejo", p_valor < 0.05)$defasagem
+p_dif <- distinct(t6, setor, p_diferenca)
+
+escrever(c(
+  "ENTREGÁVEL 3 — ANÁLISE DE DADOS",
+  "Projeto: Juros e bolsa — como setores da B3 reagem à taxa Selic",
+  "Disciplina: REC3302 — Introdução ao R Aplicado à Economia e Finanças (FEA-RP/USP)",
+  "",
+  "PERGUNTA",
+  "  Mudanças na Selic afetam de forma diferente o retorno de setores da B3?",
+  paste0("  Amostra: ", nrow(base), " meses (", format(min(base$mes), "%m/%Y"), " a ",
+         format(max(base$mes), "%m/%Y"), "), cestas de 3 ações por setor, Ibovespa como mercado."),
+  "",
+  "CONTEÚDO",
+  "  - scripts/05_analise.R: código de toda a análise (usa scripts/parametros.R).",
+  "  - dados/tratados/: base mensal de entrada (vem do Entregável 2).",
+  "  - resultados/figuras/: gráficos em PNG, 300 dpi.",
+  "      g1 retorno acumulado | g2 Selic e ciclos | g3 retorno médio por ciclo",
+  "      g4 correlações defasadas | g5 sensibilidade à Selic | g6 sensibilidade por ciclo",
+  "  - resultados/tabelas/: tabelas em CSV (separador vírgula, decimal ponto).",
+  "      t1 estatística descritiva | t2 retorno por ciclo | t3 correlações defasadas",
+  "      t4 regressões | t5 robustez do varejo | t6 efeito da Selic em cada ciclo",
+  "  - saida_console.txt: tudo o que o script imprime ao rodar.",
+  "",
+  "MÉTODO",
+  "  1. Descritiva: média, desvio, retorno acumulado e anualizado, volatilidade anual;",
+  "     retorno médio separado por ciclo de alta e de queda da Selic.",
+  "  2. Correlações entre o retorno do setor no mês t e a variação da Selic em t, t-1, t-2 e t-3.",
+  "  3. Regressões por setor, com erros-padrão Newey-West (lag 3):",
+  "       m1: ret_setor = a + b1*delta_selic + b2*ret_ibov + e",
+  "       m2: m1 + ciclo_alta + delta_selic*ciclo_alta   (b1 = efeito na queda; b1+b3 = efeito na alta)",
+  "     O controle pelo Ibovespa isola a reação própria do setor, além do movimento geral da bolsa.",
+  "  4. Robustez: varejo sem MGLU3 e cada ação de varejo sozinha.",
+  "",
+  "RESULTADOS",
+  paste0("  H1 (varejo reage negativamente) — APOIADA EM PARTE. +1 p.p. na Selic reduz o retorno mensal"),
+  paste0("     do varejo em ", num(-b_var$estimate), " p.p. (", pv(b_var$p.value), "). A correlação é significativa"),
+  paste0("     nas defasagens ", paste(cor_var_sig, collapse = ", "), " (meses). Porém o efeito vem da MGLU3: sozinha ela dá ",
+         num(so_mglu$estimate), " (", pv(so_mglu$p.value), "),"),
+  paste0("     e a cesta sem ela dá ", num(sem_mglu$estimate), " (", pv(sem_mglu$p.value), ")."),
+  paste0("  H2 (bancos: relação fraca ou positiva) — APOIADA. Coeficiente ", num(b_ban$estimate),
+         " (", pv(b_ban$p.value), "), não significativo."),
+  paste0("  H3 (utilities defensivas) — APOIADA quanto à Selic: coeficiente ", num(b_uti$estimate),
+         " (", pv(b_uti$p.value), ")."),
+  paste0("     Ressalva: o beta de mercado das utilities é ", num(coef_m1("utilities", "ret_ibov")$estimate),
+         ", ou seja, elas acompanham a bolsa quase 1 para 1."),
+  paste0("  H4 (a relação muda entre ciclos) — NÃO APOIADA. A diferença entre alta e queda não é"),
+  paste0("     significativa em nenhum setor (p entre ", num(min(p_dif$p_diferenca), 2), " e ",
+         num(max(p_dif$p_diferenca), 2), ")."),
+  paste0("     Na média simples o varejo rende ", num(ciclo_m("varejo", "queda")), "% ao mês na queda contra ",
+         num(ciclo_m("varejo", "alta")), "% na alta,"),
+  "     mas essa diferença some quando se controla pelo Ibovespa.",
+  "",
+  "LIMITAÇÕES",
+  "  - Cestas pequenas (3 ações): uma ação volátil, como a MGLU3, domina o resultado do setor.",
+  "  - O ciclo herda a direção do último movimento do Copom; não há estado \"estável\".",
+  "  - Usa a variação realizada da Selic, não a surpresa em relação às expectativas do mercado,",
+  "    que já pode estar nos preços antes da reunião do Copom.",
+  "",
+  "COMO REPRODUZIR",
+  "  Abrir esta pasta no Positron (File > Open Folder) ou no RStudio e rodar scripts/05_analise.R.",
+  "  Pacotes: tidyverse, broom, lmtest, sandwich. Figuras e tabelas são recriadas em resultados/."
+), file.path(E3, "README.txt"))
+
+# --- 4. Compactar em .zip -----------------------------------------------
+compactar <- function(pasta) {
+  destino <- paste0(pasta, ".zip")
+  if (.Platform$OS.type == "windows") {
+    cmd <- sprintf("Compress-Archive -Path '%s' -DestinationPath '%s' -Force",
+                   normalizePath(pasta), file.path(normalizePath(dirname(pasta)), basename(destino)))
+    status <- system2("powershell", c("-NoProfile", "-Command", shQuote(cmd, type = "cmd")))
+  } else {
+    old <- setwd(dirname(pasta)); on.exit(setwd(old))
+    status <- utils::zip(basename(destino), basename(pasta))
+  }
+  if (!identical(as.integer(status), 0L) || !file.exists(destino)) {
+    message("Não consegui criar ", destino, ". Compacte a pasta manualmente ",
+            "(botão direito > Compactar / Enviar para > Pasta compactada).")
+  }
+}
+compactar(E1)
+compactar(E2)
+compactar(E3)
+
+cat("\nPronto! Veja a pasta '", SAIDA, "':\n", sep = "")
+print(list.files(SAIDA, recursive = TRUE))
+if (n_falha > 0) warning("A validação teve ", n_falha, " falha(s). Confira validacao.txt antes de enviar.")

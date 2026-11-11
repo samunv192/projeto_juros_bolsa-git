@@ -1,0 +1,13 @@
+setor,defasagem,correlacao,p_valor
+bancos,0,-0.049,0.566
+bancos,1,-0.006,0.944
+bancos,2,-0.047,0.581
+bancos,3,0.058,0.496
+varejo,0,-0.188,0.026
+varejo,1,-0.19,0.024
+varejo,2,-0.195,0.021
+varejo,3,-0.131,0.126
+utilities,0,-0.006,0.945
+utilities,1,0.001,0.994
+utilities,2,0.027,0.755
+utilities,3,0.091,0.289
