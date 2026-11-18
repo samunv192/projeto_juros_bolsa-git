@@ -1,18 +1,12 @@
 
 === 1. Estatística descritiva (% ao mês; acumulado e anual em %) ===
 # A tibble: 4 × 8
-  serie     media_mensal desvio_mensal minimo maximo retorno_acumulado
-  <chr>            <dbl>         <dbl>  <dbl>  <dbl>             <dbl>
-1 Bancos            1.42          8.97  -33.3   32.5              319.
-2 Ibovespa          1.13          6.18  -29.9   17.0              273.
-3 Utilities         1.93          7.82  -32.7   30.3              863.
-4 Varejo            1.83         10.6   -24.9   31.4              502.
-  retorno_anual_medio volatilidade_anual
-                <dbl>              <dbl>
-1                13.0               31.1
-2                11.8               21.4
-3                21.2               27.1
-4                16.5               36.8
+  serie     media_mensal desvio_mensal minimo maximo retorno_acumulado retorno_anual_medio volatilidade_anual
+  <chr>            <dbl>         <dbl>  <dbl>  <dbl>             <dbl>               <dbl>              <dbl>
+1 Bancos            1.42          8.97  -33.3   32.5              319.                13.0               31.1
+2 Ibovespa          1.13          6.18  -29.9   17.0              273.                11.8               21.4
+3 Utilities         1.93          7.82  -32.7   30.3              863.                21.3               27.1
+4 Varejo            1.83         10.6   -24.9   31.4              502.                16.5               36.8
 
 === 2. Retorno médio mensal por ciclo (%) ===
 # A tibble: 4 × 5
@@ -82,19 +76,12 @@
 
 === 5. Robustez: varejo com e sem MGLU3 (coeficiente da Selic) ===
 # A tibble: 5 × 8
-  especificacao            estimate std.error p.value conf.low conf.high    r2
-  <chr>                       <dbl>     <dbl>   <dbl>    <dbl>     <dbl> <dbl>
-1 Varejo com MGLU3 (cesta)   -3.36      1.18    0.005    -5.70     -1.03 0.463
-2 Varejo sem MGLU3           -0.206     0.929   0.825    -2.04      1.63 0.485
-3 Só LREN3                   -0.241     1.59    0.88     -3.39      2.91 0.455
-4 Só MGLU3                   -9.67      3.04    0.002   -15.7      -3.66 0.243
-5 Só RADL3                   -0.171     1.12    0.879    -2.38      2.04 0.181
-      n
-  <dbl>
-1   141
-2   141
-3   141
-4   141
-5   141
+  especificacao            estimate std.error p.value conf.low conf.high    r2     n
+  <chr>                       <dbl>     <dbl>   <dbl>    <dbl>     <dbl> <dbl> <dbl>
+1 Varejo com MGLU3 (cesta)   -3.36      1.18    0.005    -5.70     -1.03 0.463   141
+2 Varejo sem MGLU3           -0.206     0.929   0.825    -2.04      1.63 0.485   141
+3 Só LREN3                   -0.241     1.59    0.88     -3.39      2.91 0.455   141
+4 Só MGLU3                   -9.67      3.04    0.002   -15.7      -3.66 0.243   141
+5 Só RADL3                   -0.171     1.12    0.879    -2.38      2.04 0.181   141
 
 Figuras salvas em resultados/figuras e tabelas em resultados/tabelas 

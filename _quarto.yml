@@ -1,0 +1,12 @@
+# _quarto.yml — configuração do Quarto para o projeto
+# Para gerar o relatório e o tutorial (HTML e PDF), na pasta do projeto:
+#   quarto render
+# ou, no Positron, abra relatorio/relatorio.qmd e clique em "Preview" / "Render".
+
+project:
+  # Só estes dois documentos são renderizados (README.md e CLAUDE.md ficam de fora)
+  render:
+    - relatorio/relatorio.qmd
+    - relatorio/tutorial.qmd
+  # O código R roda a partir da pasta do projeto, como os scripts (dados/..., resultados/...)
+  execute-dir: project

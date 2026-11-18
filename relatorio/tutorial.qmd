@@ -1,0 +1,476 @@
+---
+title: "Tutorial: do dado bruto à regressão"
+subtitle: "Como reproduzir em R a análise \"Juros e bolsa: como os setores da B3 reagem à Selic\""
+abstract-title: "Disciplina"
+abstract: "REC3302 — Introdução ao R Aplicado à Economia e Finanças (FEA-RP/USP)"
+execute:
+  echo: true
+format:
+  html:
+    code-copy: true
+    number-sections: false   # os títulos já dizem "Passo 1", "Passo 2"...
+  typst: default
+---
+
+# O que você vai aprender {.unnumbered}
+
+Este tutorial reconstrói, passo a passo, a análise do relatório de mercado: baixar dados do Banco
+Central e do Yahoo Finance, transformar cotações diárias em retornos mensais, montar a base,
+validá-la e estimar regressões com erros-padrão robustos. Cada bloco de código pode ser copiado e
+rodado no seu computador.
+
+Os passos de **coleta** (1 e 2) dependem de internet e aparecem só como código. A partir do
+passo 3, todo o código **é executado de verdade** na geração deste documento, usando os dados
+brutos salvos em `dados/brutos/`, e os resultados são conferidos com a base oficial do projeto.
+
+## Antes de começar {.unnumbered}
+
+- **R 4.6** e uma IDE (Positron ou RStudio). Abra a **pasta do projeto** como diretório de
+  trabalho (no Positron: *File > Open Folder*). Todos os caminhos são relativos a ela.
+- **Pacotes:** rode uma vez `source("scripts/00_setup.R")`, que instala tidyverse, tidyquant,
+  rbcb, jsonlite, httr2, zoo, broom, lmtest e sandwich.
+- **Atalho:** `source("rodar_tudo.R")` monta a base, valida e roda a análise a partir dos dados
+  salvos, reproduzindo os resultados do relatório. Para baixar dados novos, mude
+  `BAIXAR_DADOS <- TRUE` no início do arquivo (isso substitui os dados salvos e pode mudar os
+  números). Este tutorial explica o que acontece dentro de cada script.
+
+```
+projeto_juros_bolsa/
+├── rodar_tudo.R            # roda os scripts em ordem (coleta só se BAIXAR_DADOS = TRUE)
+├── montar_entregaveis.R    # empacota os entregáveis em .zip
+├── _quarto.yml             # configuração do Quarto
+├── scripts/
+│   ├── parametros.R        # período, pastas e composição das cestas
+│   ├── 00_setup.R          # instala pacotes
+│   ├── 01_coleta_bcb.R     # Selic e IPCA (Banco Central)
+│   ├── 02_coleta_mercado.R # preços das ações (Yahoo Finance)
+│   ├── 03_base_mensal.R    # monta a base mensal
+│   ├── 04_validacao.R      # checagens da base
+│   └── 05_analise.R        # gráficos, tabelas e regressões
+├── dados/brutos/           # dados como vieram das fontes (+ data_coleta.txt)
+├── dados/tratados/         # base mensal pronta
+├── dados/dicionario_dados.md  # descrição de cada variável
+├── resultados/             # figuras (PNG) e tabelas (CSV)
+├── relatorio/              # relatório e este tutorial (Quarto)
+└── entregaveis/            # pacotes .zip gerados por montar_entregaveis.R
+```
+
+```{r}
+#| label: pacotes
+library(tidyverse)   # manipulação de dados e gráficos
+library(lmtest)      # coeftest(): testes dos coeficientes
+library(sandwich)    # NeweyWest(): erros-padrão robustos
+```
+
+# Passo 1 — Coletar a Selic e o IPCA no Banco Central
+
+O Banco Central publica suas séries no **SGS** (Sistema Gerenciador de Séries Temporais), com uma
+API gratuita. Usamos a **série 432** (meta Selic, % ao ano, um valor por dia) e a **série 433**
+(IPCA, variação % no mês). Uma consulta é só uma URL:
+
+```{r}
+#| eval: false
+library(httr2)
+
+url <- paste0("https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados?formato=json",
+              "&dataInicial=01/12/2014&dataFinal=30/11/2017")
+
+selic <- request(url) |>
+  req_retry(max_tries = 6) |>        # tenta de novo se o servidor falhar (502, 503...)
+  req_perform() |>
+  resp_body_string() |>
+  jsonlite::fromJSON()               # vira uma tabela com as colunas data e valor
+```
+
+::: {.callout-tip}
+## Dois cuidados com a API do BCB
+
+1. **Janela máxima de 10 anos por consulta.** O script `01_coleta_bcb.R` divide o período em
+   blocos de 3 anos, baixa cada um e junta tudo com `bind_rows()`.
+2. **Instabilidade.** A API às vezes devolve uma página de erro (XML ou HTML) no lugar do JSON.
+   O script confere a resposta, tenta de novo com espera crescente e, se ainda falhar, usa o
+   último arquivo salvo em `dados/brutos/`, com um aviso.
+:::
+
+O IPCA é baixado desde **12 meses antes** do início da análise, para que o IPCA acumulado em 12
+meses já exista no primeiro mês da base.
+
+# Passo 2 — Coletar os preços das ações
+
+O pacote **tidyquant** baixa cotações do Yahoo Finance com uma linha. As ações da B3 levam o
+sufixo `.SA`; o Ibovespa é `^BVSP`. A lista fica em `scripts/parametros.R`, na tabela `CESTAS`:
+
+```{r}
+#| eval: false
+library(tidyquant)
+source("scripts/parametros.R")   # define CESTAS, DATA_INICIO e DATA_FIM
+
+precos <- tq_get(CESTAS$ticker, get = "stock.prices",
+                 from = DATA_INICIO, to = DATA_FIM)
+write_csv(precos, "dados/brutos/yahoo_precos_diarios.csv")
+```
+
+A coluna que importa é `adjusted`: o preço **ajustado** por dividendos e desdobramentos. Sem esse
+ajuste, um desdobramento de 1 para 2 apareceria como uma queda de 50% no preço.
+
+::: {.callout-note}
+O Yahoo revisa os preços ajustados com o tempo. Por isso os dados brutos ficam salvos: eles
+registram exatamente a versão usada na análise.
+:::
+
+# Passo 3 — Da cotação diária ao retorno mensal
+
+A partir daqui, tudo roda sobre os arquivos salvos. O **preço do mês** é o preço ajustado do
+**último pregão** do mês, e o **retorno mensal** é a variação percentual simples:
+
+$$
+r_t = \left(\frac{P_t}{P_{t-1}} - 1\right) \times 100
+$$
+
+```{r}
+#| label: retornos
+precos <- read_csv("dados/brutos/yahoo_precos_diarios.csv", show_col_types = FALSE)
+
+ret_ativos <- precos |>
+  filter(!is.na(adjusted)) |>
+  arrange(symbol, date) |>
+  mutate(mes = floor_date(date, "month")) |>        # 2015-01-23 vira 2015-01-01
+  group_by(symbol, mes) |>
+  summarise(preco = last(adjusted), .groups = "drop_last") |>   # último pregão do mês
+  mutate(ret = (preco / lag(preco) - 1) * 100) |>   # lag() = valor do mês anterior
+  ungroup()
+
+ret_ativos |> filter(symbol == "ITUB4.SA") |> head(4)
+```
+
+O primeiro mês (dez/2014) fica sem retorno, porque não há mês anterior. É por isso que a coleta
+começa em dezembro: para ter o retorno de janeiro de 2015.
+
+**Conferência:** os retornos calculados aqui devem ser iguais aos da base oficial do projeto.
+
+```{r}
+#| label: confere-retornos
+oficial <- read_csv("dados/tratados/retornos_ativos_mensal.csv", show_col_types = FALSE)
+
+inner_join(ret_ativos, oficial, by = c("symbol", "mes"), suffix = c("", "_oficial")) |>
+  summarise(meses_comparados = n(),
+            maior_diferenca  = max(abs(ret - ret_oficial)))
+```
+
+# Passo 4 — Selic mensal, variação e ciclo
+
+A meta Selic é diária. Para cada mês, pegamos o valor vigente no **último dia**, calculamos a
+**variação no mês** (em pontos percentuais) e classificamos o **ciclo**:
+
+```{r}
+#| label: selic
+selic_d <- read_csv("dados/brutos/bcb_selic_meta.csv", show_col_types = FALSE)
+
+selic_m <- selic_d |>
+  mutate(mes = floor_date(date, "month")) |>
+  group_by(mes) |>
+  summarise(selic = last(selic_meta)) |>
+  mutate(delta_selic = selic - lag(selic),
+         ciclo = case_when(delta_selic > 0 ~ "alta",
+                           delta_selic < 0 ~ "queda")) |>   # meses sem mudança ficam NA...
+  fill(ciclo, .direction = "downup") |>                     # ...e herdam o ciclo vigente
+  mutate(ciclo_alta = as.integer(ciclo == "alta"))
+
+selic_m |> filter(mes >= "2021-01-01", mes <= "2021-06-01")
+```
+
+O truque está em `fill()`: em fev/2021 a Selic não mudou, então o mês herda o ciclo de queda que
+vinha de antes; em mar/2021 o Copom subiu os juros e começou um ciclo de alta, que segue nos meses
+seguintes até o próximo corte.
+
+# Passo 5 — IPCA em 12 meses e juro real
+
+O IPCA acumulado em 12 meses multiplica os 12 fatores mensais. A função `rollapplyr()`, do pacote
+zoo, aplica esse produto numa janela móvel:
+
+```{r}
+#| label: ipca
+ipca_m <- read_csv("dados/brutos/bcb_ipca.csv", show_col_types = FALSE) |>
+  transmute(mes = floor_date(date, "month"), ipca) |>
+  mutate(ipca_12m = (zoo::rollapplyr(1 + ipca / 100, 12, prod, fill = NA) - 1) * 100)
+
+juro <- inner_join(selic_m, ipca_m, by = "mes") |>
+  mutate(juro_real = ((1 + selic / 100) / (1 + ipca_12m / 100) - 1) * 100)
+
+juro |> select(mes, selic, ipca_12m, juro_real) |> tail(3)
+```
+
+O **juro real ex-post** desconta a inflação dos últimos 12 meses da Selic. Note que é uma divisão,
+e não uma subtração: $(1 + i)/(1 + \pi) - 1$.
+
+# Passo 6 — Montar as cestas e a base mensal
+
+Cada cesta é a **média simples** dos retornos das três ações do setor. Juntamos tudo numa tabela
+com **uma linha por mês**:
+
+```{r}
+#| label: base
+source("scripts/parametros.R")   # traz a tabela CESTAS (ticker -> setor)
+
+setores <- ret_ativos |>
+  left_join(CESTAS, by = c("symbol" = "ticker")) |>
+  filter(!is.na(ret)) |>
+  group_by(setor, mes) |>
+  summarise(ret = mean(ret), .groups = "drop") |>
+  mutate(setor = if_else(setor == "mercado", "ibov", setor)) |>
+  pivot_wider(names_from = setor, values_from = ret, names_prefix = "ret_")
+
+# Mesmo período da base oficial (o 03 usa jan/2015 até o último mês completo com IPCA divulgado)
+base_oficial <- read_csv("dados/tratados/base_mensal.csv", show_col_types = FALSE)
+
+base <- setores |>
+  inner_join(juro, by = "mes") |>
+  filter(mes >= min(base_oficial$mes), mes <= max(base_oficial$mes))
+
+dim(base)
+```
+
+**Conferência** com a base oficial (`dados/tratados/base_mensal.csv`):
+
+```{r}
+#| label: confere-base
+all.equal(base |> select(mes, ret_bancos, ret_varejo, ret_utilities, ret_ibov,
+                         selic, delta_selic, ciclo),
+          base_oficial |> select(mes, ret_bancos, ret_varejo, ret_utilities, ret_ibov,
+                                 selic, delta_selic, ciclo),
+          check.attributes = FALSE)
+```
+
+`TRUE` significa que reconstruímos a base exatamente. Daqui em diante usamos a base oficial.
+
+```{r}
+#| label: usa-oficial
+base <- base_oficial
+```
+
+# Passo 7 — Validar antes de analisar
+
+Uma base com buracos ou valores absurdos produz conclusões erradas sem nenhuma mensagem de erro.
+O script `04_validacao.R` faz 7 checagens; três delas:
+
+```{r}
+#| label: validacao
+meses_esperados <- seq(min(base$mes), max(base$mes), by = "month")
+
+c(meses_consecutivos = identical(base$mes, meses_esperados),
+  sem_valor_ausente  = !anyNA(base),
+  selic_plausivel    = all(between(base$selic, 1, 20)))
+```
+
+O script também lista os retornos individuais acima de 30% em módulo. Eles não são erro, mas
+merecem atenção: a MGLU3 aparece muitas vezes nessa lista, e isso motivou o teste de robustez do
+passo 12.
+
+# Passo 8 — Estatística descritiva
+
+O **retorno acumulado** compõe os retornos mensais: $\prod (1 + r_t) - 1$. Somar os retornos daria
+um resultado errado.
+
+```{r}
+#| label: descritiva
+ret_long <- base |>
+  select(mes, starts_with("ret_")) |>
+  pivot_longer(-mes, names_to = "serie", names_prefix = "ret_", values_to = "ret")
+
+ret_long |>
+  group_by(serie) |>
+  summarise(media_mensal = mean(ret),
+            acumulado    = (prod(1 + ret / 100) - 1) * 100,
+            vol_anual    = sd(ret) * sqrt(12))   # volatilidade mensal x raiz de 12
+```
+
+E o retorno médio em cada ciclo, com um **teste t** para saber se a diferença é real:
+
+```{r}
+#| label: por-ciclo
+base |> group_by(ciclo) |> summarise(varejo = mean(ret_varejo), meses = n())
+
+t.test(ret_varejo ~ ciclo, data = base)$p.value
+```
+
+A diferença parece grande (quase o triplo na queda), mas o p-valor mostra que ela **não é
+estatisticamente significativa**: o varejo oscila tanto que médias de cerca de 70 meses ainda têm
+muita incerteza. Esta é uma lição importante: um gráfico de médias pode enganar.
+
+# Passo 9 — Correlações defasadas
+
+A bolsa pode demorar a reagir. Comparamos o retorno do mês $t$ com a variação da Selic em $t$,
+$t-1$, $t-2$ e $t-3$. A função `lag(x, k)` desloca a série $k$ meses:
+
+```{r}
+#| label: correlacoes
+expand_grid(setor = c("bancos", "varejo", "utilities"), defasagem = 0:3) |>
+  mutate(teste = map2(setor, defasagem, \(s, k)
+           cor.test(base[[paste0("ret_", s)]], lag(base$delta_selic, k))),
+         correlacao = map_dbl(teste, \(t) t$estimate),
+         p_valor    = map_dbl(teste, \(t) t$p.value)) |>
+  select(-teste) |>
+  filter(setor == "varejo")
+```
+
+`expand_grid()` cria todas as combinações de setor e defasagem, e `map2()` roda um teste para cada
+uma. Assim, um único bloco de código faz os 12 testes.
+
+# Passo 10 — Regressão com erros-padrão de Newey-West
+
+O modelo central compara o retorno do setor com a variação da Selic, **controlando pelo
+Ibovespa**:
+
+$$
+r_{varejo,t} = \alpha + \beta_1\,\Delta Selic_t + \beta_2\, r_{Ibov,t} + \varepsilon_t
+$$
+
+```{r}
+#| label: regressao
+m1 <- lm(ret_varejo ~ delta_selic + ret_ibov, data = base)
+
+# Erros-padrão comuns (supõem variância constante e meses independentes)
+coeftest(m1)
+
+# Erros-padrão de Newey-West: robustos a variância variável e a autocorrelação
+coeftest(m1, vcov. = NeweyWest(m1, lag = 3, prewhite = FALSE))
+```
+
+```{r}
+#| label: formata
+#| echo: false
+virgula <- function(x, d) format(round(x, d), nsmall = d, decimal.mark = ",")
+b1 <- coef(m1)[["delta_selic"]]
+ep_comum <- coeftest(m1)["delta_selic", "Std. Error"]
+ep_nw    <- coeftest(m1, vcov. = NeweyWest(m1, lag = 3, prewhite = FALSE))["delta_selic", "Std. Error"]
+```
+
+Os **coeficientes são os mesmos** nas duas tabelas; o que muda é o **erro-padrão** e, com ele, o
+p-valor. Os erros-padrão comuns supõem que a volatilidade é constante e que os meses são
+independentes, duas hipóteses pouco realistas em finanças: a volatilidade muda com o tempo (veja
+março de 2020) e meses próximos podem estar correlacionados. O Newey-West continua válido nessas
+situações, em amostras grandes; `lag = 3` considera a correlação de até 3 meses.
+
+A correção **não aumenta sempre** o erro-padrão. Aqui, o erro-padrão da Selic `r if (ep_nw < ep_comum) "caiu" else "subiu"`
+de `r virgula(ep_comum, 2)` para `r virgula(ep_nw, 2)`. O motivo para usar Newey-West não é obter
+um p-valor menor ou maior, e sim ter um erro-padrão **válido** para este tipo de dado.
+
+**Como ler:** $\beta_1 \approx$ `r virgula(b1, 2)` significa que, num mês em que a Selic sobe
+1 p.p., o varejo rende cerca de `r virgula(abs(b1), 1)` p.p. a menos do que o esperado pelo
+movimento do Ibovespa.
+
+# Passo 11 — Interação: o efeito muda com o ciclo?
+
+Para testar a H4, multiplicamos a variação da Selic pela dummy de ciclo de alta. Na fórmula do R,
+`a * b` inclui `a`, `b` e a interação `a:b`:
+
+```{r}
+#| label: interacao
+m2 <- lm(ret_varejo ~ delta_selic * ciclo_alta + ret_ibov, data = base)
+V  <- NeweyWest(m2, lag = 3, prewhite = FALSE)
+b  <- coef(m2)
+
+# Efeito na queda: beta1.  Efeito na alta: beta1 + beta3.
+efeito_alta <- b[["delta_selic"]] + b[["delta_selic:ciclo_alta"]]
+ep_alta <- sqrt(V["delta_selic", "delta_selic"] +
+                V["delta_selic:ciclo_alta", "delta_selic:ciclo_alta"] +
+                2 * V["delta_selic", "delta_selic:ciclo_alta"])
+
+c(efeito_queda = b[["delta_selic"]], efeito_alta = efeito_alta, erro_padrao_alta = ep_alta)
+```
+
+O erro-padrão de uma soma de coeficientes precisa da **covariância** entre eles:
+$Var(\beta_1 + \beta_3) = Var(\beta_1) + Var(\beta_3) + 2\,Cov(\beta_1, \beta_3)$. Somar os erros-padrão
+individuais estaria errado. Para saber se a diferença entre os ciclos é real, basta olhar o
+p-valor de $\beta_3$ em `coeftest(m2, vcov. = V)`.
+
+# Passo 12 — Robustez: o resultado depende de uma ação?
+
+Refazemos a cesta de varejo sem a MGLU3:
+
+```{r}
+#| label: robustez
+ativos <- read_csv("dados/tratados/retornos_ativos_mensal.csv", show_col_types = FALSE)
+
+varejo_sem_mglu <- ativos |>
+  filter(setor == "varejo", symbol != "MGLU3.SA") |>
+  group_by(mes) |>
+  summarise(ret_varejo_sem_mglu = mean(ret))
+
+m_sem <- lm(ret_varejo_sem_mglu ~ delta_selic + ret_ibov,
+            data = left_join(base, varejo_sem_mglu, by = "mes"))
+
+coeftest(m_sem, vcov. = NeweyWest(m_sem, lag = 3, prewhite = FALSE))["delta_selic", ]
+```
+
+Sem a MGLU3, o coeficiente fica perto de zero e deixa de ser significativo. **Sempre teste se o
+resultado sobrevive à retirada de observações extremas**, principalmente com amostras pequenas.
+
+# Passo 13 — Um gráfico no padrão do projeto
+
+Todos os gráficos usam a mesma paleta por setor, título com a conclusão, subtítulo explicando a
+medida e a fonte no rodapé:
+
+```{r}
+#| label: grafico
+#| fig-width: 8
+#| fig-height: 3
+cores <- c(Bancos = "#1F3864", Varejo = "#E07A2E", Utilities = "#2A9D8F")
+
+coefs <- map(c(Bancos = "bancos", Varejo = "varejo", Utilities = "utilities"), \(s) {
+  m <- lm(reformulate(c("delta_selic", "ret_ibov"), paste0("ret_", s)), data = base)
+  ct <- coeftest(m, vcov. = NeweyWest(m, lag = 3, prewhite = FALSE))
+  tibble(beta = ct["delta_selic", 1], ep = ct["delta_selic", 2],
+         t_crit = qt(0.975, df = m$df.residual))   # valor crítico do IC de 95%
+}) |>
+  list_rbind(names_to = "setor") |>
+  mutate(setor = factor(setor, levels = c("Utilities", "Varejo", "Bancos")))  # ordem no eixo
+
+ggplot(coefs, aes(beta, setor, color = setor)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_pointrange(aes(xmin = beta - t_crit * ep, xmax = beta + t_crit * ep), linewidth = 0.9) +
+  scale_color_manual(values = cores, guide = "none") +
+  labs(title = "Só o varejo reage à Selic",
+       subtitle = "Efeito de +1 p.p. na Selic sobre o retorno mensal (p.p.), IC de 95%",
+       x = "Coeficiente da variação da Selic", y = NULL,
+       caption = "Fonte: BCB/SGS e Yahoo Finance. Elaboração própria.") +
+  theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"), plot.title.position = "plot")
+```
+
+Para salvar em alta resolução: `ggsave("figura.png", width = 8, height = 4, dpi = 300, bg = "white")`.
+
+# Passo 14 — Gerar o relatório e os entregáveis
+
+O relatório e este tutorial são documentos **Quarto** (`.qmd`), que misturam texto e código R. Os
+números do texto do relatório não são digitados: são lidos de `resultados/tabelas/` com código
+*inline*, por exemplo `` `r knitr::inline_expr("num(v$estimate)")` ``. Os títulos dos gráficos
+também são calculados no `05_analise.R`. Para regenerar tudo:
+
+```{r}
+#| eval: false
+source("rodar_tudo.R")            # base, validação e análise (com os dados salvos)
+source("montar_entregaveis.R")    # renderiza relatório e tutorial e gera os .zip
+# ou, só o relatório, no terminal na pasta do projeto:  quarto render
+```
+
+Se os dados forem atualizados (`BAIXAR_DADOS <- TRUE`), os números mudam sozinhos, mas as frases
+interpretativas do relatório precisam ser relidas.
+
+# Erros comuns {.unnumbered}
+
+| Sintoma | Causa provável | Solução |
+|---|---|---|
+| `Diretório de trabalho errado` | O R não está na pasta do projeto | Abrir a **pasta** no Positron (*File > Open Folder*) |
+| Aviso `Falha ao baixar a série ... usando o arquivo salvo` | API do Banco Central fora do ar | Esperar e rodar de novo; enquanto isso, o script usa o último arquivo salvo |
+| `quarto: command not found` no terminal | O Quarto que vem com o Positron não está no PATH | Usar o botão *Render* do Positron ou rodar `montar_entregaveis.R`, que acha o Quarto sozinho |
+| Retornos diferentes na 5ª casa decimal | O Yahoo revisou os preços ajustados | Normal; os dados brutos salvos registram a versão usada |
+| `could not find function "coeftest"` | Pacote não carregado | `library(lmtest)` e `library(sandwich)` |
+| Aviso `pacote foi compilado no R versão ...` | Pacote de versão mais nova do R | Inofensivo; pode ignorar |
+
+# Para ir além {.unnumbered}
+
+- Troque ou amplie as cestas em `scripts/parametros.R` e rode `rodar_tudo.R` de novo.
+- Pondere as cestas pelo valor de mercado, em vez de média simples.
+- Use a **surpresa** da decisão do Copom (decisão menos a expectativa do Boletim Focus) no lugar da
+  variação realizada.

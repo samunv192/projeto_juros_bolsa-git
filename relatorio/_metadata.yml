@@ -1,0 +1,44 @@
+# Opções comuns ao relatório e ao tutorial (valem para todos os .qmd desta pasta)
+
+# >>> PREENCHER com os nomes dos 5 integrantes do grupo <<<
+author:
+  - Samuel Neachic Vasques
+  - João Pedro Diniz Menegucci
+  - Hugo Mendes Luchetti
+  - Alisson pedro Viana Rocha
+  - Edson Saturnino Franquilei
+
+date: today
+date-format: long
+lang: pt-BR
+
+execute:
+  warning: false
+  message: false
+
+fig-dpi: 300
+
+format:
+  html:
+    theme: [cosmo, estilo.scss]
+    embed-resources: true      # HTML em um arquivo só, com as figuras dentro
+    toc: true
+    toc-title: Sumário
+    toc-location: left
+    number-sections: true
+    format-links: false        # sem o link "Outros formatos: Typst" (o PDF é entregue à parte)
+    fig-align: center
+    df-print: kable
+  typst:
+    papersize: a4
+    margin:
+      x: 2.2cm
+      y: 2cm
+    mainfont: Arial
+    fontsize: 10pt
+    toc: true
+    toc-title: Sumário
+    toc-depth: 2
+    fig-align: center
+    df-print: kable
+    include-in-header: estilo.typ

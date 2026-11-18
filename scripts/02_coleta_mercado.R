@@ -9,6 +9,8 @@ precos <- tq_get(CESTAS$ticker, get = "stock.prices",
                  from = DATA_INICIO, to = DATA_FIM)
 
 write_csv(precos, file.path(PASTA_BRUTOS, "yahoo_precos_diarios.csv"))
+# Registra a data da coleta (a data de modificação do arquivo muda ao copiar ou clonar o projeto)
+writeLines(format(Sys.Date()), file.path(PASTA_BRUTOS, "data_coleta.txt"))
 
 # --- Checagens ----------------------------------------------------------
 # 1) Algum ticker não veio?

@@ -18,17 +18,24 @@ O professor pediu: boa estrutura, projeto "de mercado", visual bom e comunicaç�
 2. Base mensal integrada e validada — CONCLUÍDO (141 meses, jan/2015 a set/2026, 7/7 checagens OK)
 3. Análise (descritiva, correlações defasadas, regressões) — CONCLUÍDO (05_analise.R roda sem erros;
    g1..g6 e t1..t6, títulos já enunciam as conclusões)
-4. Relatório de mercado + tutorial em Quarto (HTML e PDF), com resumo executivo de 1 página
-5. README e instruções de reprodução
+4. Relatório de mercado + tutorial em Quarto (HTML e PDF), com resumo executivo de 1 página —
+   CONCLUÍDO (relatorio/relatorio.qmd e tutorial.qmd; passou por revisão cruzada independente)
+5. README e instruções de reprodução — CONCLUÍDO (README.md na raiz; vai no pacote do Entregável 4)
 
 ## Estrutura
-- rodar_tudo.R: roda 00 a 05 em ordem
-- montar_entregaveis.R: monta entregaveis/ com as pastas e .zip dos Entregáveis 1, 2 e 3
-  (o 3 roda o 05 de novo, e o README dele puxa os números de H1-H4 das tabelas)
+- rodar_tudo.R: roda 00, 03, 04 e 05 com os dados salvos; 01 e 02 (coleta) só com BAIXAR_DADOS <- TRUE
+- montar_entregaveis.R: renderiza o Quarto (acha o quarto.exe do Positron) e monta entregaveis/ com
+  pastas e .zip dos Entregáveis 1 a 4 (o 3 roda o 05 de novo; os README.txt puxam números das tabelas)
+- _quarto.yml (raiz): renderiza só relatorio/relatorio.qmd e tutorial.qmd; execute-dir = projeto
+- relatorio/: relatorio.qmd, tutorial.qmd, _comum.R (lê t1..t6 e formata números; todo número do
+  texto vem daqui), _metadata.yml (autores e formatos), estilo.scss (HTML), estilo.typ (PDF)
+- PDF via Typst (vem com o Quarto; não há LaTeX instalado). Quarto: Positron\resources\app\quarto\bin
 - scripts/parametros.R: período (DATA_INICIO = 2014-12-01), pastas e tabela CESTAS
-- scripts/00_setup.R: instala pacotes (tidyverse, tidyquant, rbcb, jsonlite, broom, lmtest, sandwich)
+- scripts/00_setup.R: instala pacotes (tidyverse, tidyquant, rbcb, jsonlite, httr2, zoo, broom, lmtest,
+  sandwich); só acessa a internet se algum pacote não carregar
 - scripts/01_coleta_bcb.R: Selic meta (SGS 432) e IPCA (SGS 433) via API do BCB direto (httr2)
-- scripts/02_coleta_mercado.R: preços diários do Yahoo Finance via tidyquant
+- scripts/02_coleta_mercado.R: preços diários do Yahoo Finance via tidyquant; grava
+  dados/brutos/data_coleta.txt (data da coleta: 2026-10-28)
 - scripts/03_base_mensal.R: gera dados/tratados/base_mensal.csv, base_mensal_excel.csv e retornos_ativos_mensal.csv
 - scripts/04_validacao.R: checagens da base
 - scripts/05_analise.R: gera resultados/figuras/g1..g6.png e resultados/tabelas/t1..t6.csv
@@ -44,7 +51,11 @@ O professor pediu: boa estrutura, projeto "de mercado", visual bom e comunicaç�
   "estável" fica como limitação.
 - Juro real ex-post = (1 + Selic) / (1 + IPCA 12m) - 1. IPCA é baixado desde 12 meses antes.
 - Regressões: ret_setor ~ delta_selic + ret_ibov (m1) e com interação delta_selic * ciclo_alta (m2),
-  erros-padrão Newey-West (lag 3).
+  erros-padrão Newey-West (lag 3). Pela definição de ciclo, toda alta cai em ciclo de alta e todo
+  corte em ciclo de queda: o m2 compara a reação a cortes (β1) com a reação a altas (β1+β3).
+- Linguagem: coeficientes não significativos = "sem efeito detectável", nunca "não reage/é imune";
+  coeficientes = associação, não causalidade. Correlações defasadas não provam reação atrasada
+  (delta_selic tem autocorrelação 0,42-0,59).
 - Robustez: varejo com e sem MGLU3 (MGLU3 tem muitos meses com retorno acima de 30%).
 - Padrão visual: bancos #1F3864, varejo #E07A2E, utilities #2A9D8F, Ibovespa #8C8C8C; fonte dos dados
   no rodapé; 300 dpi. Depois de ver os resultados, reescrever os títulos dos gráficos para enunciarem
@@ -59,9 +70,15 @@ O professor pediu: boa estrutura, projeto "de mercado", visual bom e comunicaç�
 - Os dados do Yahoo são revisados com o tempo (diferenças na 5ª casa decimal); os brutos salvos
   registram a versão usada.
 
+## Resultados
+H1 apoiada só em parte (varejo -3,4 p.p. por +1 p.p., p = 0,005, mas sem MGLU3 o efeito some: -0,2,
+p = 0,83); H2 apoiada, sem efeito detectável (bancos +0,27, n.s.; beta 1,30); H3 apoiada só quanto
+aos juros (utilities +0,84, n.s.; beta 0,99); H4 não apoiada (diferença altas vs. cortes n.s. em
+todos os setores, p de 0,40 a 0,87). Diferença de médias do varejo entre ciclos (2,7% vs 0,9% ao mês)
+não é significativa (teste t, p = 0,34).
+
 ## Próximos passos
-Resultados (Entregável 3): H1 apoiada só em parte (varejo -3,4 p.p. por +1 p.p., p = 0,005, mas sem
-MGLU3 o efeito some: -0,2, p = 0,83); H2 apoiada (bancos +0,27, n.s.); H3 apoiada (utilities n.s.);
-H4 não apoiada (interação n.s. em todos os setores). Correlação do varejo significativa nas
-defasagens de 0 a 2 meses.
-1. Montar o relatório/tutorial em Quarto (Entregáveis 4 e 5) e estender montar_entregaveis.R.
+1. Preencher os nomes dos 5 integrantes em relatorio/_metadata.yml e no fim do README.md; depois
+   rodar montar_entregaveis.R.
+2. Os números estáticos do README.md e desta seção valem para a coleta de 28/10/2026; revisar se os
+   dados forem atualizados.

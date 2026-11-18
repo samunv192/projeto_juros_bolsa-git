@@ -1,0 +1,363 @@
+---
+title: "Juros e bolsa: como os setores da B3 reagem à Selic"
+subtitle: "Relatório de mercado — bancos, varejo e utilities, de jan/2015 a set/2026"
+abstract-title: "Disciplina"
+abstract: "REC3302 — Introdução ao R Aplicado à Economia e Finanças (FEA-RP/USP)"
+execute:
+  echo: false
+format:
+  typst:
+    section-numbering: "1.1"
+---
+
+```{r}
+#| label: setup
+source("relatorio/_comum.R")
+
+v  <- coef_m1("varejo");  b <- coef_m1("bancos");  u <- coef_m1("utilities")
+bv <- coef_m1("bancos", "ret_ibov")$estimate
+uv <- coef_m1("utilities", "ret_ibov")$estimate
+sem_mglu <- rob("Varejo sem MGLU3");  so_mglu <- rob("Só MGLU3")
+faixa_p_h4 <- paste0(num(min(p_diferenca$p_diferenca), 2), " a ", num(max(p_diferenca$p_diferenca), 2))
+```
+
+{{< pagebreak >}}
+
+# Resumo executivo {.unnumbered}
+
+**Pergunta.** Uma mudança na taxa Selic afeta da mesma forma as ações de todos os setores?
+Analisamos `r n_meses` meses (`r mes_ano(inicio)` a `r mes_ano(fim)`) de três cestas de ações
+da B3 (bancos, varejo e utilities), medindo a reação de cada uma à variação da Selic
+**além do que já é explicado pelo movimento geral da bolsa** (Ibovespa).
+
+**Principais conclusões**
+
+1. **O varejo é o único setor com reação significativa à Selic, mas ela vem de uma única ação.**
+   Cada +1 p.p. na Selic no mês vem acompanhado de um retorno `r num(-v$estimate)` p.p. menor no
+   varejo (`r pv(v$p.value)`). Num passo típico do Copom, de `r num(passo_tipico, 2)` p.p., isso
+   equivale a `r num(-v$estimate * passo_tipico)` p.p. a menos no mês. Sem a MGLU3, o efeito
+   desaparece (`r sinal(sem_mglu$estimate)` p.p., `r pv(sem_mglu$p.value)`).
+2. **Não há evidência de que os bancos ganhem com a alta de juros.** O efeito estimado é
+   `r sinal(b$estimate)` p.p. (`r pv(b$p.value)`), com intervalo de confiança amplo. O que move os
+   bancos é a bolsa: com beta de `r num(bv, 2)`, eles amplificam as oscilações do Ibovespa.
+3. **Utilities não mostram sensibilidade à Selic, mas acompanham a bolsa.** O efeito estimado não
+   é significativo (`r sinal(u$estimate)` p.p., `r pv(u$p.value)`), e o beta de `r num(uv, 2)` mostra
+   que o setor segue o Ibovespa quase 1 para 1. Foi o setor de maior retorno acumulado no período
+   (`r num(desc("Utilities", "retorno_acumulado"), 0)`%).
+4. **Não encontramos diferença entre a reação a altas e a cortes da Selic.** Em nenhum setor a
+   diferença é significativa (p de `r faixa_p_h4`), embora o teste tenha pouco poder. O varejo
+   rendeu em média `r num(ciclo_medio("varejo", "queda"))`% ao mês nos ciclos de queda e
+   `r num(ciclo_medio("varejo", "alta"))`% nos de alta, mas, com a volatilidade do setor, essa
+   diferença está dentro do acaso (`r pv(teste_ciclo_varejo$p.value)`).
+
+```{r}
+#| label: tbl-hipoteses
+#| tbl-cap: "Hipóteses do projeto e resultado"
+tibble(
+  Hipótese = c("H1. Varejo reage negativamente à Selic",
+               "H2. Bancos: relação mais fraca ou positiva",
+               "H3. Utilities são defensivas (pouco sensíveis)",
+               "H4. A relação muda entre ciclos de alta e de queda"),
+  Resultado = c(paste0(sinal(v$estimate), " p.p. (", pv(v$p.value), "); sem MGLU3: ",
+                       sinal(sem_mglu$estimate), " p.p."),
+                paste0(sinal(b$estimate), " p.p. (", pv(b$p.value), ")"),
+                paste0(sinal(u$estimate), " p.p. (", pv(u$p.value), "); beta de mercado ", num(uv, 2)),
+                paste0("diferença entre altas e cortes com p de ", faixa_p_h4)),
+  Veredito = c("Apoiada em parte", "Apoiada (sem efeito detectável)",
+               "Apoiada (só quanto aos juros)", "Não apoiada")
+) |>
+  knitr::kable()
+```
+
+**Para o investidor.** Nesta amostra, a sensibilidade a juros apareceu **em uma empresa, e não em
+um setor inteiro**: escolher o setor não parece bastar para se proteger de uma alta da Selic ou para
+se expor a uma queda. Nem bancos nem utilities mostraram ganho nos meses de alta de juros.
+
+{{< pagebreak >}}
+
+# Contexto: uma década de Selic em montanha-russa
+
+Entre `r mes_ano(inicio)` e `r mes_ano(fim)`, a meta Selic mudou em `r n_mudancas` dos
+`r n_meses` meses (`r n_altas` altas e `r n_cortes` cortes) e passou por `r nrow(ciclos_alta)`
+ciclos de alta (@fig-selic). Neste relatório, um ciclo de alta vai da primeira alta até o mês
+anterior ao primeiro corte, incluindo os meses de manutenção no topo:
+
+```{r}
+#| label: ciclos-texto
+texto_ciclos <- ciclos_alta |>
+  mutate(t = paste0(mes_ano(inicio), " a ", mes_ano(fim), ": última alta em ", mes_ano(ultima_alta),
+                    ", com a Selic chegando a ", num(selic_max, 2), "% a.a.")) |>
+  pull(t)
+```
+
+`r paste0("- ", texto_ciclos, collapse = "\n")`
+
+A mínima do período foi de `r num(min(base$selic), 0)`% a.a., atingida em
+`r mes_ano(base$mes[which.min(base$selic)])`.
+
+![Meta Selic no fim de cada mês. As áreas cinza marcam os ciclos de alta.](../resultados/figuras/g2_selic.png){#fig-selic}
+
+**Por que os setores deveriam reagir de forma diferente?**
+
+- **Varejo:** depende de crédito ao consumidor e de consumo de bens duráveis, e muitas empresas
+  são avaliadas pelo crescimento futuro. Juros mais altos encarecem o crédito, esfriam as vendas e
+  reduzem o valor presente dos lucros futuros. Espera-se **relação negativa** (H1).
+- **Bancos:** juros mais altos podem ampliar a margem financeira (diferença entre o que o banco
+  cobra e o que paga), mas também aumentam a inadimplência. O efeito líquido tende a ser
+  **fraco ou até positivo** (H2).
+- **Utilities** (energia e saneamento): receitas reguladas e demanda estável, que pouco dependem
+  do ciclo econômico. Espera-se **baixa sensibilidade** (H3).
+- **Assimetria:** o mercado pode reagir de forma diferente a altas e a cortes, ou conforme a fase
+  do ciclo de juros (H4).
+
+# Dados e metodologia
+
+## Dados
+
+```{r}
+#| label: tbl-cestas
+#| tbl-cap: "Composição das cestas setoriais"
+tibble(
+  Setor = c("Bancos", "Varejo", "Utilities", "Mercado"),
+  Ativos = c("ITUB4 (Itaú), BBDC4 (Bradesco), BBAS3 (Banco do Brasil)",
+             "LREN3 (Lojas Renner), MGLU3 (Magazine Luiza), RADL3 (Raia Drogasil)",
+             "EQTL3 (Equatorial), CMIG4 (Cemig), SBSP3 (Sabesp)",
+             "Ibovespa (^BVSP)")
+) |>
+  knitr::kable()
+```
+
+- **Preços:** cotações diárias ajustadas por dividendos e desdobramentos (Yahoo Finance). O preço
+  do mês é o do último pregão; o retorno mensal é a variação percentual simples.
+- **Cestas:** média simples dos retornos das três ações de cada setor (pesos iguais).
+- **Selic:** meta definida pelo Copom (Banco Central, série SGS 432), vigente no fim de cada mês.
+  A **variação da Selic** ($\Delta Selic$) é a mudança da meta no mês, em pontos percentuais.
+- **Ciclo:** direção do último movimento do Copom. Meses sem mudança herdam o ciclo vigente, o que
+  resulta em `r meses_ciclo("alta")` meses de alta e `r meses_ciclo("queda")` de queda.
+- **Validação:** a base passou nas 7 checagens automáticas (meses consecutivos, nenhum valor
+  ausente, as 9 ações com retorno em todos os meses, valores dentro de faixas plausíveis).
+
+## Metodologia
+
+A análise segue três etapas, da mais simples à mais rigorosa:
+
+1. **Descritiva:** retorno, risco e retorno médio em cada ciclo da Selic.
+2. **Correlações defasadas:** correlação entre o retorno do setor no mês $t$ e a variação da Selic
+   no mesmo mês e em até três meses antes.
+3. **Regressões** para cada setor $s$:
+
+$$
+r_{s,t} = \alpha + \beta_1\,\Delta Selic_t + \beta_2\, r_{Ibov,t} + \varepsilon_t
+\qquad \text{(modelo 1)}
+$$
+
+$$
+r_{s,t} = \alpha + \beta_1\,\Delta Selic_t + \beta_2\, r_{Ibov,t} + \gamma\, Alta_t
++ \beta_3\,(\Delta Selic_t \times Alta_t) + \varepsilon_t
+\qquad \text{(modelo 2)}
+$$
+
+::: {.callout-note}
+## Como ler os coeficientes
+
+- $\beta_1$ (modelo 1) é a resposta do setor a +1 p.p. na Selic, **descontado o movimento da
+  bolsa**. Incluir o Ibovespa é essencial: sem ele, estaríamos medindo o quanto a bolsa inteira
+  reage aos juros, e não o que é próprio de cada setor.
+- $\beta_2$ é o **beta de mercado**: acima de 1, o setor amplifica a bolsa; abaixo de 1, suaviza.
+- No modelo 2, $Alta_t$ vale 1 nos ciclos de alta. Como toda alta da Selic ocorre num ciclo de
+  alta e todo corte num ciclo de queda, $\beta_1$ mede, na prática, a reação a **cortes**, e
+  $\beta_1 + \beta_3$ a reação a **altas**. $\beta_3$ testa se as duas são diferentes (H4).
+- Os erros-padrão são de **Newey-West** (3 defasagens), que permanecem válidos, em amostras
+  grandes, quando a variância dos retornos muda com o tempo e quando há correlação entre meses
+  próximos, como é comum em séries financeiras.
+- Os coeficientes medem **associação**, não efeito causal (veja as Limitações).
+:::
+
+# Resultados
+
+## Desempenho: todos os setores superaram o Ibovespa
+
+```{r}
+#| label: tbl-desempenho
+#| tbl-cap: !expr paste0("Retorno e risco, de ", mes_ano(inicio), " a ", mes_ano(fim), " (média mensal, acumulado no período e anualizado)")
+t1 |>
+  mutate(serie = factor(serie, levels = c("Bancos", "Varejo", "Utilities", "Ibovespa"))) |>
+  arrange(serie) |>
+  transmute(Série = serie,
+            `Média (% a.m.)`   = num(media_mensal, 2),
+            `Acumulado (%)`    = num(retorno_acumulado, 0),
+            `Anual (% a.a.)`   = num(retorno_anual_medio),
+            `Volatilidade (% a.a.)` = num(volatilidade_anual),
+            `Pior mês (%)`     = num(minimo),
+            `Melhor mês (%)`   = num(maximo)) |>
+  knitr::kable(align = "lrrrrrr")
+```
+
+As três cestas renderam mais que o Ibovespa (`r num(desc("Ibovespa", "retorno_anual_medio"))`% ao
+ano). As utilities lideraram, com `r num(desc("Utilities", "retorno_anual_medio"))`% ao ano e
+volatilidade menor que a de bancos e varejo. O varejo foi o setor mais arriscado
+(`r num(desc("Varejo", "volatilidade_anual"))`% de volatilidade anual).
+
+![Retorno acumulado, base 100 = dez/2014, escala logarítmica.](../resultados/figuras/g1_retorno_acumulado.png){#fig-acumulado}
+
+A @fig-acumulado mostra por que é preciso cuidado com conclusões visuais. O varejo subiu
+`r num(varejo_melhor_queda$ret, 0)`% no ciclo de cortes de `r periodo(varejo_melhor_queda)`, o que
+parece confirmar a H1. Mas, no ciclo de cortes de `r periodo(varejo_pior_queda)`, o setor
+`r if (varejo_pior_queda$ret < 0) "caiu" else "subiu"` `r num(abs(varejo_pior_queda$ret), 0)`%,
+mesmo com os juros em queda. A trajetória do varejo não acompanha a Selic de forma simples, o que é
+coerente com o resultado de robustez da seção 3.5.
+
+![Retorno médio mensal em cada ciclo da Selic.](../resultados/figuras/g3_retorno_por_ciclo.png){#fig-ciclo}
+
+Na média simples (@fig-ciclo), o varejo rendeu `r num(ciclo_medio("varejo", "queda"))`% ao mês nos
+ciclos de queda, contra `r num(ciclo_medio("varejo", "alta"))`% nos de alta. A diferença parece
+grande, mas **não é estatisticamente significativa** (teste t, `r pv(teste_ciclo_varejo$p.value)`):
+com volatilidade de `r num(desc("Varejo", "desvio_mensal"))`% ao mês, médias de cerca de
+`r meses_por_ciclo` meses ainda têm muita incerteza. Por isso, as conclusões se apoiam nas
+regressões a seguir.
+
+## Correlações: só o varejo se move contra a Selic
+
+![Correlação entre o retorno do setor no mês t e a variação da Selic em t − k.](../resultados/figuras/g4_correlacoes_defasadas.png){#fig-correl}
+
+Apenas o varejo tem correlação significativa com a variação da Selic (@fig-correl): negativa, de
+cerca de `r num(filter(t3, setor == "varejo", defasagem == 0)$correlacao, 2)`, no mesmo mês e
+também nas defasagens de `r juntar(defas_varejo_sig[-1])` meses. Isso **não prova** que a reação
+seja atrasada: o Copom move os juros em sequência, e a própria variação da Selic tem
+autocorrelação de `r num(autocor_delta[1], 2)` a `r num(max(autocor_delta), 2)` nas defasagens
+de 1 a 3 meses. Assim, um mês de alta tende a vir depois de outros meses de alta. Bancos e utilities
+têm correlações próximas de zero em todas as defasagens.
+
+## Regressões: varejo sensível, bancos e utilities não (H1, H2 e H3)
+
+```{r}
+#| label: tbl-regressao
+#| tbl-cap: "Modelo 1: efeito de +1 p.p. na Selic sobre o retorno mensal do setor (p.p.), controlando pelo Ibovespa"
+t4 |>
+  filter(modelo == "m1", term %in% c("delta_selic", "ret_ibov")) |>
+  select(setor, term, estimate, conf.low, conf.high, p.value, r2) |>
+  pivot_wider(names_from = term, values_from = c(estimate, conf.low, conf.high, p.value)) |>
+  mutate(setor = factor(NOMES[setor], levels = NOMES[1:3])) |>
+  arrange(setor) |>
+  transmute(Setor = setor,
+            `Efeito da Selic (β1)` = sinal(estimate_delta_selic, 2),
+            `IC 95%` = paste0("[", num(conf.low_delta_selic, 2), "; ", num(conf.high_delta_selic, 2), "]"),
+            `p-valor` = num(p.value_delta_selic, 3),
+            `Beta de mercado (β2)` = num(estimate_ret_ibov, 2),
+            `R²` = num(r2, 2)) |>
+  knitr::kable(align = "lrcrrr")
+```
+
+![Efeito de +1 p.p. na Selic, com intervalo de confiança de 95%.](../resultados/figuras/g5_sensibilidade_selic.png){#fig-sensib}
+
+- **H1 (varejo):** o coeficiente é `r sinal(v$estimate, 2)` (`r pv(v$p.value)`), e o intervalo de
+  confiança fica inteiro abaixo de zero (@fig-sensib). É o único setor com efeito significativo.
+- **H2 (bancos):** o efeito é `r sinal(b$estimate, 2)` e não significativo. Não há evidência de que
+  os bancos ganhem com a alta de juros, e a estimativa é bem menor, em módulo, que a do varejo.
+  O dado que mais chama atenção é o beta de `r num(bv, 2)`, o maior dos três setores, e o
+  R² de `r num(r2_m1("bancos"), 2)`: o retorno dos bancos é quase todo explicado pela bolsa.
+- **H3 (utilities):** o efeito é `r sinal(u$estimate, 2)` e não significativo: não há sensibilidade
+  detectável à Selic. Mas o beta de `r num(uv, 2)` mostra que o setor não é defensivo em relação à
+  bolsa: ele acompanha o Ibovespa quase 1 para 1.
+
+**Ressalva sobre H2 e H3.** As duas hipóteses comparam bancos e utilities com o varejo. Essa
+comparação depende da MGLU3: sem ela, o varejo também não reage (seção 3.5). Além disso, não
+testamos formalmente se os coeficientes dos setores diferem entre si. Por isso, o veredito é
+"apoiada" no sentido de **ausência de efeito detectável**, e não de prova de que o setor é imune
+aos juros.
+
+## Altas e cortes da Selic (H4)
+
+```{r}
+#| label: tbl-ciclos
+#| tbl-cap: "Modelo 2: retorno (p.p.) por 1 p.p. de variação da Selic, separando cortes e altas"
+t6 |>
+  mutate(setor = factor(NOMES[setor], levels = NOMES[1:3])) |>
+  select(setor, ciclo, estimate, p.value, p_diferenca) |>
+  pivot_wider(names_from = ciclo, values_from = c(estimate, p.value)) |>
+  arrange(setor) |>
+  transmute(Setor = setor,
+            `Cortes, ciclo de queda (β1)` = paste0(sinal(estimate_queda, 2), " (p = ", num(p.value_queda, 3), ")"),
+            `Altas, ciclo de alta (β1 + β3)` = paste0(sinal(estimate_alta, 2), " (p = ", num(p.value_alta, 3), ")"),
+            `Diferença: p-valor de β3` = num(p_diferenca, 3)) |>
+  knitr::kable(align = "lccr")
+```
+
+![Reação a altas e a cortes da Selic, com intervalo de confiança de 95%.](../resultados/figuras/g6_sensibilidade_por_ciclo.png){#fig-por-ciclo}
+
+Nenhum setor reage de forma significativamente diferente a altas e a cortes (@tbl-ciclos): os
+p-valores da diferença vão de `r faixa_p_h4`. No varejo, a estimativa para cortes
+(`r sinal(efeito_ciclo("varejo", "queda")$estimate, 2)`) é maior, em módulo, que para altas
+(`r sinal(efeito_ciclo("varejo", "alta")$estimate, 2)`), mas os intervalos de confiança se sobrepõem
+bastante (@fig-por-ciclo). Com `r n_altas` altas e `r n_cortes` cortes no período, o teste tem pouco
+poder: uma diferença moderada poderia existir sem ser detectada. **H4 não é apoiada** pelos dados.
+
+## Robustez: o efeito do varejo vem da MGLU3
+
+A MGLU3 teve meses extremos no período (retornos acima de 30% em módulo em vários meses). Para
+saber se ela domina o resultado do varejo, a regressão foi refeita sem ela e com cada ação sozinha:
+
+```{r}
+#| label: tbl-robustez
+#| tbl-cap: "Efeito de +1 p.p. na Selic sobre o varejo, por especificação (modelo 1)"
+t5 |>
+  transmute(Especificação = especificacao,
+            `Efeito da Selic` = sinal(estimate, 2),
+            `IC 95%` = paste0("[", num(conf.low, 2), "; ", num(conf.high, 2), "]"),
+            `p-valor` = num(p.value, 3),
+            `R²` = num(r2, 2)) |>
+  knitr::kable(align = "lrcrr")
+```
+
+O resultado é claro: a MGLU3 sozinha tem efeito de `r sinal(so_mglu$estimate, 2)` p.p.
+(`r pv(so_mglu$p.value)`), enquanto LREN3 e RADL3, sozinhas ou juntas, não mostram reação
+detectável à Selic. Portanto, **H1 é apoiada só em parte**: há um efeito negativo na cesta de
+varejo, mas ele reflete uma empresa, e não o setor como um todo.
+
+# Implicações para o investidor
+
+- **A exposição a juros parece ser de empresa, não de setor.** No varejo, a sensibilidade
+  apareceu só na MGLU3, possivelmente por combinar venda a crédito, endividamento e valor de mercado
+  apoiado no crescimento futuro (hipótese não testada aqui). Lojas Renner e Raia Drogasil não
+  mostraram reação detectável. Para avaliar a exposição a juros, vale olhar a empresa, e não só o
+  setor.
+- **Não há evidência de que bancos protejam contra a alta de juros.** A tese de que "juros altos
+  favorecem bancos" não aparece nos retornos mensais. O que define o risco dos bancos é a bolsa
+  (beta de `r num(bv, 2)`).
+- **Utilities: sem sensibilidade detectável à Selic, mas com risco de bolsa.** O setor teve o
+  melhor retorno do período, mas acompanha o Ibovespa quase 1 para 1.
+- **Escolher setor pelo ciclo de juros não encontra apoio nos dados.** Não houve diferença
+  significativa entre a reação a altas e a cortes.
+
+*Este relatório tem fins acadêmicos e não constitui recomendação de investimento.*
+
+# Limitações
+
+- **Cestas pequenas:** com 3 ações por setor, uma ação volátil domina o resultado, como mostrou a
+  MGLU3. Cestas maiores ou ponderadas por valor de mercado dariam uma visão mais setorial, e a
+  conclusão "de empresa, não de setor" precisaria ser confirmada com mais empresas.
+- **Viés de sobrevivência:** as ações foram escolhidas entre empresas relevantes hoje, que
+  sobreviveram ao período. Empresas que encolheram ou saíram da bolsa ficam de fora.
+- **Variação realizada, não surpresa:** a análise usa a mudança da Selic, e não a diferença entre a
+  decisão e o que o mercado esperava. Uma alta já esperada pode estar nos preços antes da reunião
+  do Copom, o que tende a reduzir os efeitos medidos.
+- **Frequência mensal:** reações concentradas nos dias das reuniões do Copom podem se diluir no mês.
+- **Associação, não causalidade:** o Banco Central reage à inflação e à atividade econômica, que
+  também afetam as ações. Os coeficientes medem associação, não o efeito causal dos juros.
+- **Definição de ciclo:** meses sem mudança herdam o ciclo vigente; não há estado "estável". Com
+  isso, ciclo e direção do movimento se confundem: o teste de H4 compara altas com cortes, e não o
+  início com o fim de um ciclo.
+- **Poder estatístico e múltiplos testes:** com `r n_altas` altas e `r n_cortes` cortes, diferenças
+  moderadas podem passar despercebidas. Por outro lado, com 12 correlações testadas a 5%, é de
+  esperar que alguma seja significativa por acaso.
+
+# Reprodutibilidade
+
+Todo o projeto é reproduzível em R. Os scripts 03 a 05 montam e validam a base e rodam a análise a
+partir dos dados brutos salvos; `quarto render` gera este relatório e o tutorial. Os números do
+texto e das tabelas são lidos de `resultados/tabelas/`, e os títulos dos gráficos são calculados
+pelo próprio script de análise, para que tudo acompanhe uma eventual atualização dos dados. O passo
+a passo, com o código comentado, está no **tutorial** que acompanha este relatório.
+
+**Fontes:** Banco Central do Brasil (SGS, séries 432 e 433) e Yahoo Finance. Dados coletados em
+`r data_coleta`.

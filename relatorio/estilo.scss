@@ -1,0 +1,48 @@
+/*-- scss:defaults --*/
+// Mesma paleta dos gráficos do projeto
+$azul-bancos: #1F3864;
+$laranja-varejo: #E07A2E;
+$verde-utilities: #2A9D8F;
+$cinza-ibov: #8C8C8C;
+
+$primary: $azul-bancos;
+$link-color: $azul-bancos;
+$font-family-sans-serif: Arial, "Helvetica Neue", Helvetica, sans-serif;
+$headings-color: $azul-bancos;
+$body-color: #222222;
+
+/*-- scss:rules --*/
+.quarto-title-block .title {
+  font-weight: 700;
+}
+
+.quarto-title-block .subtitle {
+  color: #555555;
+}
+
+h2 {
+  border-bottom: 2px solid $azul-bancos;
+  padding-bottom: 0.25rem;
+  margin-top: 2.2rem;
+}
+
+// Tabelas mais limpas, no estilo de relatório de mercado
+table {
+  font-size: 0.92rem;
+}
+
+thead th {
+  background-color: $azul-bancos;
+  color: #ffffff;
+}
+
+// Destaques numéricos do resumo executivo
+.destaque {
+  font-weight: 700;
+  color: $azul-bancos;
+}
+
+figcaption {
+  color: #555555;
+  font-size: 0.9rem;
+}

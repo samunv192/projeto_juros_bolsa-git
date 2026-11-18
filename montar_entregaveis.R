@@ -1,5 +1,6 @@
-# montar_entregaveis.R — monta os pacotes dos Entregáveis 1, 2 e 3 prontos para enviar
-# Rode DEPOIS do rodar_tudo.R. Resultado: pasta entregaveis/ com três pastas e três .zip.
+# montar_entregaveis.R — monta os pacotes dos Entregáveis 1 a 4 prontos para enviar
+# Rode DEPOIS do rodar_tudo.R. Resultado: pasta entregaveis/ com quatro pastas e quatro .zip.
+# (O Entregável 5, README e instruções de reprodução, vai dentro do pacote 4 como README.md.)
 
 source("scripts/parametros.R")
 
@@ -7,6 +8,7 @@ SAIDA <- "entregaveis"
 E1 <- file.path(SAIDA, "Entregavel1_Coleta")
 E2 <- file.path(SAIDA, "Entregavel2_Base")
 E3 <- file.path(SAIDA, "Entregavel3_Analise")
+E4 <- file.path(SAIDA, "Entregavel4_Relatorio")
 
 # --- 0. Confere se tudo já foi gerado -----------------------------------
 brutos   <- c("bcb_selic_meta.csv", "bcb_ipca.csv", "yahoo_precos_diarios.csv")
@@ -39,7 +41,14 @@ selic  <- read_csv(file.path(PASTA_BRUTOS, "bcb_selic_meta.csv"),       show_col
 ipca   <- read_csv(file.path(PASTA_BRUTOS, "bcb_ipca.csv"),             show_col_types = FALSE)
 precos <- read_csv(file.path(PASTA_BRUTOS, "yahoo_precos_diarios.csv"), show_col_types = FALSE)
 
-data_coleta <- format(file.mtime(file.path(PASTA_BRUTOS, "yahoo_precos_diarios.csv")), "%d/%m/%Y")
+# Data da coleta gravada pelo 02 (a data de modificação do arquivo muda ao copiar ou clonar)
+arq_data <- file.path(PASTA_BRUTOS, "data_coleta.txt")
+data_coleta <- if (file.exists(arq_data)) {
+  format(as.Date(readLines(arq_data, n = 1)), "%d/%m/%Y")
+} else {
+  format(file.mtime(file.path(PASTA_BRUTOS, "yahoo_precos_diarios.csv")), "%d/%m/%Y")
+}
+file.copy(arq_data, file.path(E1, "dados", "brutos"))
 pregoes <- count(precos, symbol)
 lista_tickers <- CESTAS |>
   group_by(setor) |>
@@ -197,31 +206,40 @@ escrever(c(
   "  3. Regressões por setor, com erros-padrão Newey-West (lag 3):",
   "       m1: ret_setor = a + b1*delta_selic + b2*ret_ibov + e",
   "       m2: m1 + ciclo_alta + delta_selic*ciclo_alta   (b1 = efeito na queda; b1+b3 = efeito na alta)",
+  "     Pela definição de ciclo, toda alta da Selic cai em ciclo de alta e todo corte em ciclo de",
+  "     queda: na prática, o m2 compara a reação a cortes (b1) com a reação a altas (b1+b3).",
   "     O controle pelo Ibovespa isola a reação própria do setor, além do movimento geral da bolsa.",
   "  4. Robustez: varejo sem MGLU3 e cada ação de varejo sozinha.",
   "",
-  "RESULTADOS",
-  paste0("  H1 (varejo reage negativamente) — APOIADA EM PARTE. +1 p.p. na Selic reduz o retorno mensal"),
-  paste0("     do varejo em ", num(-b_var$estimate), " p.p. (", pv(b_var$p.value), "). A correlação é significativa"),
-  paste0("     nas defasagens ", paste(cor_var_sig, collapse = ", "), " (meses). Porém o efeito vem da MGLU3: sozinha ela dá ",
-         num(so_mglu$estimate), " (", pv(so_mglu$p.value), "),"),
-  paste0("     e a cesta sem ela dá ", num(sem_mglu$estimate), " (", pv(sem_mglu$p.value), ")."),
-  paste0("  H2 (bancos: relação fraca ou positiva) — APOIADA. Coeficiente ", num(b_ban$estimate),
-         " (", pv(b_ban$p.value), "), não significativo."),
-  paste0("  H3 (utilities defensivas) — APOIADA quanto à Selic: coeficiente ", num(b_uti$estimate),
-         " (", pv(b_uti$p.value), ")."),
-  paste0("     Ressalva: o beta de mercado das utilities é ", num(coef_m1("utilities", "ret_ibov")$estimate),
-         ", ou seja, elas acompanham a bolsa quase 1 para 1."),
-  paste0("  H4 (a relação muda entre ciclos) — NÃO APOIADA. A diferença entre alta e queda não é"),
-  paste0("     significativa em nenhum setor (p entre ", num(min(p_dif$p_diferenca), 2), " e ",
-         num(max(p_dif$p_diferenca), 2), ")."),
+  "RESULTADOS (associações; não medem efeito causal)",
+  paste0("  H1 (varejo reage negativamente) — APOIADA EM PARTE. +1 p.p. na Selic vem acompanhado de"),
+  paste0("     retorno mensal ", num(-b_var$estimate), " p.p. menor no varejo (", pv(b_var$p.value),
+         "). Porém o efeito vem da MGLU3:"),
+  paste0("     sozinha ela dá ", num(so_mglu$estimate), " (", pv(so_mglu$p.value),
+         "), e a cesta sem ela dá ", num(sem_mglu$estimate), " (", pv(sem_mglu$p.value), ")."),
+  paste0("     A correlação também é significativa nas defasagens ", paste(cor_var_sig, collapse = ", "),
+         ", mas a própria variação da Selic"),
+  "     é autocorrelacionada (o Copom move os juros em sequência), então isso não prova reação atrasada.",
+  paste0("  H2 (bancos: relação fraca ou positiva) — APOIADA (sem efeito detectável). Coeficiente ",
+         num(b_ban$estimate), " (", pv(b_ban$p.value), ")."),
+  "     Ressalva: a comparação com o varejo depende da MGLU3; sem ela, o varejo também não reage.",
+  paste0("  H3 (utilities defensivas) — APOIADA SÓ QUANTO AOS JUROS: coeficiente ", num(b_uti$estimate),
+         " (", pv(b_uti$p.value), "), sem efeito detectável."),
+  paste0("     Mas o beta de mercado das utilities é ", num(coef_m1("utilities", "ret_ibov")$estimate),
+         ": elas acompanham a bolsa quase 1 para 1."),
+  paste0("  H4 (a relação muda entre ciclos) — NÃO APOIADA. A diferença entre a reação a altas e a cortes"),
+  paste0("     não é significativa em nenhum setor (p entre ", num(min(p_dif$p_diferenca), 2), " e ",
+         num(max(p_dif$p_diferenca), 2), "); o teste tem pouco poder."),
   paste0("     Na média simples o varejo rende ", num(ciclo_m("varejo", "queda")), "% ao mês na queda contra ",
          num(ciclo_m("varejo", "alta")), "% na alta,"),
-  "     mas essa diferença some quando se controla pelo Ibovespa.",
+  paste0("     mas essa diferença não é estatisticamente significativa (teste t, ",
+         pv(t.test(ret_varejo ~ ciclo, data = base)$p.value), "): o varejo oscila demais"),
+  paste0("     para que médias de cerca de ", round(mean(table(base$ciclo))), " meses separem os ciclos."),
   "",
   "LIMITAÇÕES",
   "  - Cestas pequenas (3 ações): uma ação volátil, como a MGLU3, domina o resultado do setor.",
-  "  - O ciclo herda a direção do último movimento do Copom; não há estado \"estável\".",
+  "  - O ciclo herda a direção do último movimento do Copom; não há estado \"estável\". Por isso",
+  "    os ciclos de alta incluem os meses de manutenção no topo, até o primeiro corte.",
   "  - Usa a variação realizada da Selic, não a surpresa em relação às expectativas do mercado,",
   "    que já pode estar nos preços antes da reunião do Copom.",
   "",
@@ -230,7 +248,75 @@ escrever(c(
   "  Pacotes: tidyverse, broom, lmtest, sandwich. Figuras e tabelas são recriadas em resultados/."
 ), file.path(E3, "README.txt"))
 
-# --- 4. Compactar em .zip -----------------------------------------------
+# --- 4. Entregável 4: relatório, tutorial e README -----------------------
+# Renderiza o relatório e o tutorial (HTML e PDF) com o Quarto, que já vem com o Positron/RStudio.
+achar_quarto <- function() {
+  candidatos <- c(
+    Sys.which("quarto"),
+    file.path(Sys.getenv("LOCALAPPDATA"), "Programs/Positron/resources/app/quarto/bin/quarto.exe"),
+    "C:/Program Files/Positron/resources/app/quarto/bin/quarto.exe",
+    "C:/Program Files/RStudio/resources/app/bin/quarto/bin/quarto.exe",
+    "C:/Program Files/Quarto/bin/quarto.exe"
+  )
+  candidatos <- candidatos[nzchar(candidatos) & file.exists(candidatos)]
+  if (length(candidatos) == 0) NA_character_ else unname(candidatos[1])
+}
+
+quarto <- achar_quarto()
+if (!is.na(quarto)) {
+  cat("\nRenderizando relatório e tutorial com o Quarto...\n")
+  # system2() já põe o caminho entre aspas; não usar shQuote() aqui
+  if (system2(normalizePath(quarto), "render") != 0) stop("O quarto render falhou. Veja as mensagens acima.")
+} else {
+  message("Quarto não encontrado; usando o relatório já renderizado em relatorio/.")
+}
+
+saidas <- file.path("relatorio", c("relatorio.html", "relatorio.pdf", "tutorial.html", "tutorial.pdf"))
+if (!all(file.exists(saidas))) {
+  stop("Renderize o relatório antes (no terminal: quarto render). Faltam:\n  ",
+       paste(saidas[!file.exists(saidas)], collapse = "\n  "))
+}
+if (min(file.mtime(saidas)) < max(file.mtime(list.files("resultados/tabelas", full.names = TRUE)))) {
+  warning("O relatório é mais antigo que os resultados da análise. Rode 'quarto render' de novo.")
+}
+
+dir.create(file.path(E4, "codigo_fonte", "relatorio"), recursive = TRUE)
+file.copy(saidas, E4)
+file.copy("README.md", E4)
+file.copy("_quarto.yml", file.path(E4, "codigo_fonte"))
+file.copy(file.path("relatorio", c("relatorio.qmd", "tutorial.qmd", "_comum.R", "_metadata.yml",
+                                   "estilo.scss", "estilo.typ")),
+          file.path(E4, "codigo_fonte", "relatorio"))
+
+escrever(c(
+  "ENTREGÁVEL 4 — RELATÓRIO DE MERCADO, TUTORIAL E README",
+  "Projeto: Juros e bolsa — como setores da B3 reagem à taxa Selic",
+  "Disciplina: REC3302 — Introdução ao R Aplicado à Economia e Finanças (FEA-RP/USP)",
+  "",
+  "CONTEÚDO",
+  "  - relatorio.pdf / relatorio.html: relatório de mercado. A página 2 é o resumo executivo,",
+  "    em 1 página; depois vêm contexto, dados e metodologia, resultados (H1 a H4), robustez,",
+  "    implicações para o investidor e limitações.",
+  "  - tutorial.pdf / tutorial.html: passo a passo em R, do dado bruto à regressão. O código é",
+  "    executado de verdade e confere que reconstrói exatamente a base do projeto.",
+  "  - README.md: apresentação do projeto e instruções de reprodução (Entregável 5).",
+  "  - codigo_fonte/: arquivos Quarto (.qmd) e de estilo que geram o relatório e o tutorial.",
+  "",
+  "OS ARQUIVOS HTML",
+  "  São autocontidos (figuras incluídas): basta abrir no navegador, sem internet.",
+  "",
+  "COMO OS NÚMEROS SÃO GERADOS",
+  "  Os números do texto e das tabelas do relatório são lidos de resultados/tabelas/ (gerados por",
+  "  scripts/05_analise.R), e os títulos dos gráficos são calculados no próprio 05. Se os dados",
+  "  forem atualizados, basta rodar a análise e renderizar de novo; só o período no subtítulo do",
+  "  relatório e as frases interpretativas precisam ser relidos.",
+  "",
+  "COMO REGENERAR",
+  "  No projeto completo, na pasta do projeto: quarto render",
+  "  (ou, no Positron, abrir relatorio/relatorio.qmd e clicar em Render)."
+), file.path(E4, "README.txt"))
+
+# --- 5. Compactar em .zip -----------------------------------------------
 compactar <- function(pasta) {
   destino <- paste0(pasta, ".zip")
   if (.Platform$OS.type == "windows") {
@@ -249,6 +335,7 @@ compactar <- function(pasta) {
 compactar(E1)
 compactar(E2)
 compactar(E3)
+compactar(E4)
 
 cat("\nPronto! Veja a pasta '", SAIDA, "':\n", sep = "")
 print(list.files(SAIDA, recursive = TRUE))
